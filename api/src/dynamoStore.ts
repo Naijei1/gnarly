@@ -609,8 +609,10 @@ function floorIdFromSk(sk: string, versionId: string) {
   return sk.startsWith(prefix) ? sk.slice(prefix.length) : sk;
 }
 
-function delay(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(() => resolve(), ms);
+  });
 }
 
 function backoffMs(attempt: number) {
