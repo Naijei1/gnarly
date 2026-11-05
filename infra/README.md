@@ -8,6 +8,7 @@ Deploy steps, environment variables, and the admin-email rule are in [docs/aws.m
 npm install
 npm run bundle
 npx cdk diff
+npx cdk deploy
 ```
 
-`cdk deploy` is intentionally not part of the migration change.
+`npm run bundle` writes the Lambda zip contents to `infra/build`. The function handler is `dist/lambda.handler` in that directory. Redeploy that asset after API changes. `cdk deploy` was not run by the migration itself.

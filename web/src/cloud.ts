@@ -437,13 +437,11 @@ export async function listBuildings(): Promise<Building[]> {
 export async function loadBuilding(input: Building): Promise<Building> {
   if (!input.activeVersion) return { ...input, notice: 'No active map version is published.' };
   const versionId = input.activeVersion;
-  let detail: VersionBody;
+  let detail: VersionBody | null = null;
   let pack: PackageBody;
   try {
-    [detail, pack] = await Promise.all([
-      apiRequest('GET', `/v1/buildings/${encodeURIComponent(input.id)}/versions/${encodeURIComponent(versionId)}`) as Promise<VersionBody>,
-      apiRequest('GET', `/v1/buildings/${encodeURIComponent(input.id)}/package?version=${encodeURIComponent(versionId)}`) as Promise<PackageBody>,
-    ]);
+    pack = await apiRequest('GET', `/v1/buildings/${encodeURIComponent(input.id)}/package?version=${encodeURIComponent(versionId)}`) as PackageBody;
+    if (canEdit()) detail = await apiRequest('GET', `/v1/buildings/${encodeURIComponent(input.id)}/versions/${encodeURIComponent(versionId)}`) as VersionBody;
   } catch (error) {
     return { ...input, notice: error instanceof Error ? error.message : String(error) };
   }
@@ -452,7 +450,7 @@ export async function loadBuilding(input: Building): Promise<Building> {
   const zones: ZoneView[] = [];
   for (const item of pack.zones || []) {
     const graphFile = fileNamed(item.files, 'building.json');
-    const meta = detail.zones.find(zone => zone.id === item.zoneId);
+    const meta = detail?.zones.find(zone => zone.id === item.zoneId);
     if (!graphFile) {
       errors.push(item.zoneId + ': building.json is missing');
       continue;
@@ -484,12 +482,12 @@ export async function loadBuilding(input: Building): Promise<Building> {
   const connectionsFile = fileNamed(pack.files, 'zone-connections.json');
   const layoutFile = fileNamed(pack.files, 'building-layout.json');
   const shared = {
-    connectionsMetaPath: detail.version.zoneConnectionsPath || '',
-    connectionsRevision: detail.version.webZoneConnectionsRevision || pack.connectionsRevision || '',
-    layoutMetaPath: detail.version.buildingLayoutPath || '',
-    layoutRevision: detail.version.webBuildingLayoutRevision || pack.layoutRevision || '',
-    zoneConnectionsPath: connectionsFile?.path || detail.version.zoneConnectionsPath || storageBase + '/zone-connections.json',
-    layoutPath: layoutFile?.path || detail.version.buildingLayoutPath || storageBase + '/building-layout.json',
+    connectionsMetaPath: detail?.version.zoneConnectionsPath || '',
+    connectionsRevision: detail?.version.webZoneConnectionsRevision || pack.connectionsRevision || '',
+    layoutMetaPath: detail?.version.buildingLayoutPath || '',
+    layoutRevision: detail?.version.webBuildingLayoutRevision || pack.layoutRevision || '',
+    zoneConnectionsPath: connectionsFile?.path || detail?.version.zoneConnectionsPath || storageBase + '/zone-connections.json',
+    layoutPath: layoutFile?.path || detail?.version.buildingLayoutPath || storageBase + '/building-layout.json',
   };
   if (zones.length) {
     const first = zones.find(zone => zone.scan) || zones[0];
@@ -537,9 +535,9 @@ export async function loadBuilding(input: Building): Promise<Building> {
       ...shared,
       graph,
       graphPath: graphFile.path,
-      graphRevision: detail.version.webGraphRevision || pack.graphRevision || '',
+      graphRevision: detail?.version.webGraphRevision || pack.graphRevision || '',
       scan: scanResult.scan,
-      structurePath: detail.version.structurePath,
+      structurePath: detail?.version.structurePath,
       notice: scanResult.scan ? 'Showing RoomPlan geometry.' : 'No scan geometry uploaded yet; showing graph-based layout.',
     };
   } catch (error) {

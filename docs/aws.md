@@ -32,7 +32,7 @@ Items carry `type`, `buildingId`, `versionId`, `ownerUid` (null on imported rows
 
 Everyone, including anonymous visitors, can list buildings and download published files. The site and API are otherwise read-only.
 
-Writes (create, publish, commit, presigned PUT, graph/layout/connection pointer updates, record edits) succeed only when the bearer token has `email_verified: true` and `email` is in `ADMIN_EMAILS`. The default is `nj277@cornell.edu`. The comparison is case-insensitive. A signed-in user with any other email gets HTTP 403. A missing token on a write gets HTTP 401.
+Writes (create, publish, commit, presigned PUT, graph/layout/connection pointer updates, record edits) succeed only when the bearer token has `email_verified: true` and `email` is in `ADMIN_EMAILS`. The default is `nj277@cornell.edu`. The comparison is case-insensitive. A signed-in user with any other email gets HTTP 403. A missing token on a write gets HTTP 401. Anonymous list and download requests are not rate-limited. Signed-in traffic still is, with one conditional update per counter instead of a single transaction.
 
 The web app hides the Edit tab, the cloud save mode, and record-editing controls unless that same verified email is signed in. Hiding the controls is not the security check; the API is.
 

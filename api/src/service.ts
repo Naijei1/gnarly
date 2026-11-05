@@ -595,6 +595,9 @@ export class PublishApi {
   }
 
   private async limit(action: Action, caller: Caller, buildingId: string) {
+    // Viewing is public. Anonymous list/download calls were sharing one transaction
+    // per IP and canceling each other. Only signed-in traffic, and every publish, is counted.
+    if (caller.anonymous && action !== 'publish') return;
     const quota = this.quotas[action];
     const { windowStart, retryAfterSeconds } = rateWindow(quota, this.deps.now());
     const keys = (['user', 'building', 'ip'] as const).map(kind => ({

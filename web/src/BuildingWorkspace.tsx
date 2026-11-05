@@ -5,7 +5,7 @@ import type { Building, BuildingLayout, Graph, Node, ZoneConnection, ZoneConnect
 import { useCanEdit } from './cloud.ts';
 import { pointOnFloor } from './geometry.ts';
 import { addWaypoint, autoConnect, connectWaypoints, deleteWaypoint, disconnectWaypoints, updateWaypoint, validateGraph } from './graphEdit.ts';
-import { copyGraph, createGraphStore, readLocalGraph, type GraphSnapshot } from './graphStore.ts';
+import { copyGraph, createGraphStore, createLoadedGraphStore, readLocalGraph, type GraphSnapshot } from './graphStore.ts';
 import { combineBuilding, elevatorFloorFit, findBuildingRoute, nodeKey, splitKey, zoneEdgeChecks, type ElevatorStop } from './buildingGraph.ts';
 import { loadBuildingMeta, saveConnections, saveLayout, type DataMode } from './buildingStore.ts';
 import { addZoneConnection, removeZoneConnection } from './zoneConnections.ts';
@@ -50,7 +50,10 @@ export default function BuildingWorkspace({building,onBack,onUpdate,onDirtyChang
   const editZone=zones.find(zone=>zone.id===editZoneId)||zones[0];
   const [sessionGraphs,setSessionGraphs]=useState<Record<string,Graph>>({});
   const savedZones=useMemo(()=>zones.map(zone=>({...zone,graph:sessionGraphs[zone.id]||(mode==='local'&&editor&&readLocalGraph(zoneBuilding(building,zone)))||zone.graph})),[zones,sessionGraphs,mode,building,editor]);
-  const store=useMemo(()=>createGraphStore(zoneBuilding(building,editZone),mode),[building.id,building.activeVersion,editZone.id,mode]);
+  const store=useMemo(()=>{
+    const zone=zoneBuilding(building,editZone);
+    return editor?createGraphStore(zone,mode):createLoadedGraphStore(zone);
+  },[editor,mode,building.id,building.activeVersion,building.graph,building.graphPath,building.graphRevision,editZone.id,editZone.graph,editZone.graphPath,editZone.graphRevision]);
   const key=draftKey(building,mode,editZoneId);
 
   const [base,setBase]=useState<GraphSnapshot|null>(null),[draft,setDraft]=useState<Graph|null>(null),[draftOwner,setDraftOwner]=useState(''),[remote,setRemote]=useState<GraphSnapshot|null>(null);

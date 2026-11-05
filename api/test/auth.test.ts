@@ -13,6 +13,7 @@ import { MemoryCounters, MemoryMetadata, MemoryObjectStore } from '../src/store.
 function world() {
   const metadata = new MemoryMetadata();
   const objects = new MemoryObjectStore();
+  const counters = new MemoryCounters();
   const deps: Deps & { trustProxy: boolean; corsOrigins: string[] } = {
     now: () => new Date('2026-10-14T04:00:00Z'),
     adminUid: 'legacy-admin',
@@ -23,12 +24,12 @@ function world() {
     },
     objects,
     metadata,
-    counters: new MemoryCounters(),
+    counters,
     trustProxy: true,
     corsOrigins: ['http://localhost:5173', 'https://naijei.com'],
   };
   const server = createServer((req, res) => { void createHandler(deps)(req, res); });
-  return { server, metadata, objects };
+  return { server, metadata, objects, counters };
 }
 
 test('admin email check requires a verified address from ADMIN_EMAILS', () => {
@@ -92,6 +93,33 @@ test('anonymous visitors can read and only the verified admin email can write', 
     assert.equal(signed.method, 'PUT');
     assert.match(signed.url, /zone-connections/);
     assert.equal(signed.headers['Content-Type'], 'application/json');
+  } finally {
+    server.close();
+  }
+});
+
+test('anonymous reads do not consume rate counters', async () => {
+  const { server, metadata, objects, counters } = world();
+  const base = await listen(server);
+  try {
+    await metadata.createBuilding({
+      id: 'hall', name: 'Hall', status: 'active', activeVersion: 'v1', ownerUid: null, acl: {}, visibility: 'authenticated',
+    });
+    metadata.versions.set('hall/v1', { id: 'v1', versionNumber: 1, status: 'published' });
+    objects.put('buildings/hall/v1/zone-connections.json', Buffer.from('{"schemaVersion":1,"connections":[]}'), 'application/json');
+    assert.equal((await fetch(base + '/v1/buildings')).status, 200);
+    assert.equal((await fetch(base + '/v1/buildings/hall/package')).status, 200);
+    assert.equal((await fetch(base + '/v1/downloads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'buildings/hall/v1/zone-connections.json' }),
+    })).status, 200);
+    assert.equal(counters.counts.size, 0);
+    const write = await send(base, '/v1/buildings/hall/publishes', {
+      files: [{ name: 'zone-connections.json', size: 2, contentType: 'application/json' }],
+    }, 'admin', 'nj277@cornell.edu', true);
+    assert.equal(write.status, 200);
+    assert.ok(counters.counts.size > 0);
   } finally {
     server.close();
   }

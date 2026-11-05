@@ -220,6 +220,60 @@ test('pointer updates are conditional and rate counters stop at the limit', asyn
   assert.equal(publishSk('p1'), 'PUBLISH#p1');
 });
 
+test('rate counters do not turn transaction conflicts into failures', async () => {
+  const commands: string[] = [];
+  let conflicts = 0;
+  const inner = new FakeDynamo();
+  const client = {
+    async send(command: { constructor: { name: string }; input: Record<string, unknown> }) {
+      commands.push(command.constructor.name);
+      if (command.constructor.name === 'TransactWriteCommand') throw new Error('rate counters must not use a transaction');
+      if (command.constructor.name === 'UpdateCommand' && conflicts < 2) {
+        conflicts += 1;
+        const error = new Error('conflict');
+        error.name = 'TransactionConflictException';
+        throw error;
+      }
+      return inner.send(command);
+    },
+  };
+  const counters = new DynamoCounters(client as never, 'gnarly', async () => {});
+  const result = await counters.consume([
+    { id: 'user', limit: 5 },
+    { id: 'building', limit: 5 },
+    { id: 'ip', limit: 5 },
+  ]);
+  assert.deepEqual(result, { ok: true });
+  assert.equal(commands.includes('TransactWriteCommand'), false);
+  assert.equal(commands.filter(name => name === 'UpdateCommand').length, 5);
+  assert.equal(inner.items.get(`${ratePk('user')}\0RATE`)?.count, 1);
+  assert.equal(inner.items.get(`${ratePk('building')}\0RATE`)?.count, 1);
+  assert.equal(inner.items.get(`${ratePk('ip')}\0RATE`)?.count, 1);
+
+  const limited = new DynamoCounters({
+    async send() {
+      const error = new Error('limited');
+      error.name = 'ConditionalCheckFailedException';
+      throw error;
+    },
+  } as never, 'gnarly', async () => {});
+  assert.deepEqual(await limited.consume([{ id: 'user', limit: 1 }]), { ok: false });
+
+  const stuck = new DynamoCounters({
+    async send() {
+      const error = new Error('conflict');
+      error.name = 'TransactionCanceledException';
+      (error as { CancellationReasons?: { Code: string }[] }).CancellationReasons = [
+        { Code: 'TransactionConflict' },
+        { Code: 'TransactionConflict' },
+        { Code: 'TransactionConflict' },
+      ];
+      throw error;
+    },
+  } as never, 'gnarly', async () => {});
+  assert.deepEqual(await stuck.consume([{ id: 'user', limit: 1 }]), { ok: true });
+});
+
 test('record patches reject a stale document', async () => {
   const fake = new FakeDynamo();
   const metadata = new DynamoMetadata(fake as never, 'gnarly');

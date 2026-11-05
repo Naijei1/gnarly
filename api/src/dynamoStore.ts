@@ -340,40 +340,52 @@ export class DynamoMetadata implements MetadataStore {
 export class DynamoCounters implements CounterStore {
   private readonly doc: DynamoDBDocumentClient;
   private readonly table: string;
+  private readonly wait: (ms: number) => Promise<void>;
 
-  constructor(doc: DynamoDBDocumentClient, table: string) {
+  constructor(doc: DynamoDBDocumentClient, table: string, wait: (ms: number) => Promise<void> = delay) {
     this.doc = doc;
     this.table = table;
+    this.wait = wait;
   }
 
   async consume(keys: RateKey[]) {
     if (!keys.length) return { ok: true as const };
-    const ordered = [...keys].sort((a, b) => a.id < b.id ? -1 : 1);
     const ttl = Math.floor(Date.now() / 1000) + 2 * 60 * 60;
-    try {
-      await this.doc.send(new TransactWriteCommand({
-        TransactItems: ordered.map(key => ({
-          Update: {
-            TableName: this.table,
-            Key: { PK: ratePk(key.id), SK: 'RATE' },
-            UpdateExpression: 'SET #count = if_not_exists(#count, :zero) + :one, #ttl = :ttl, #kind = :kind',
-            ConditionExpression: 'attribute_not_exists(#count) OR #count < :limit',
-            ExpressionAttributeNames: { '#count': 'count', '#ttl': 'ttl', '#kind': 'type' },
-            ExpressionAttributeValues: {
-              ':zero': 0,
-              ':one': 1,
-              ':ttl': ttl,
-              ':kind': 'rate',
-              ':limit': key.limit,
-            },
+    // Separate updates so concurrent page loads do not cancel each other.
+    // A transaction touching the same three counters fails with TransactionConflict, which is not a quota rejection.
+    const results = await Promise.all(keys.map(key => this.increment(key, ttl)));
+    return results.some(result => result === 'limited') ? { ok: false as const } : { ok: true as const };
+  }
+
+  private async increment(key: RateKey, ttl: number): Promise<'ok' | 'limited'> {
+    const attempts = 4;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        await this.doc.send(new UpdateCommand({
+          TableName: this.table,
+          Key: { PK: ratePk(key.id), SK: 'RATE' },
+          UpdateExpression: 'SET #count = if_not_exists(#count, :zero) + :one, #ttl = :ttl, #kind = :kind',
+          ConditionExpression: 'attribute_not_exists(#count) OR #count < :limit',
+          ExpressionAttributeNames: { '#count': 'count', '#ttl': 'ttl', '#kind': 'type' },
+          ExpressionAttributeValues: {
+            ':zero': 0,
+            ':one': 1,
+            ':ttl': ttl,
+            ':kind': 'rate',
+            ':limit': key.limit,
           },
-        })),
-      }));
-      return { ok: true as const };
-    } catch (error) {
-      if (isConditional(error)) return { ok: false as const };
-      throw error;
+        }));
+        return 'ok';
+      } catch (error) {
+        if (isConditionalCheckFailed(error)) return 'limited';
+        if (!isContention(error) || attempt === attempts - 1) {
+          if (isContention(error)) return 'ok';
+          throw error;
+        }
+        await this.wait(backoffMs(attempt));
+      }
     }
+    return 'ok';
   }
 }
 
@@ -595,6 +607,33 @@ function zoneIdFromSk(sk: string, versionId: string) {
 function floorIdFromSk(sk: string, versionId: string) {
   const prefix = `FLOOR#${versionId}#`;
   return sk.startsWith(prefix) ? sk.slice(prefix.length) : sk;
+}
+
+function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function backoffMs(attempt: number) {
+  const base = 15 * 2 ** attempt;
+  return base + Math.floor(Math.random() * base);
+}
+
+function isConditionalCheckFailed(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const name = (error as { name?: string }).name;
+  if (name === 'ConditionalCheckFailedException') return true;
+  if (name !== 'TransactionCanceledException') return false;
+  const reasons = (error as { CancellationReasons?: { Code?: string }[] }).CancellationReasons ?? [];
+  return reasons.some(reason => reason.Code === 'ConditionalCheckFailed');
+}
+
+function isContention(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const name = (error as { name?: string }).name;
+  if (name === 'TransactionConflictException' || name === 'TransactionInProgressException') return true;
+  if (name !== 'TransactionCanceledException') return false;
+  const reasons = (error as { CancellationReasons?: { Code?: string }[] }).CancellationReasons ?? [];
+  return reasons.some(reason => reason.Code === 'TransactionConflict') && !reasons.some(reason => reason.Code === 'ConditionalCheckFailed');
 }
 
 function isConditional(error: unknown) {

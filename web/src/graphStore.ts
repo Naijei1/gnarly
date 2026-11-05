@@ -44,6 +44,23 @@ export function createLocalGraphStore(building: Building): GraphStore {
     },
   };
 }
+/** The graph already loaded with the building. Viewers do not refetch it. */
+export function createLoadedGraphStore(building: Building): GraphStore {
+  if (!building.graph) throw Error('Graph is unavailable.');
+  const graph = copyGraph(building.graph);
+  const snapshot: GraphSnapshot = {
+    graph,
+    revision: `${building.graphPath || 'loaded'}:${graphDigest(graph)}`,
+    path: building.graphPath,
+    remoteMarker: building.graphRevision || '',
+    source: 'local',
+  };
+  return {
+    async load() { return structuredClone(snapshot); },
+    async save() { throw Error('This account cannot edit the map.'); },
+    subscribe() { return () => {}; },
+  };
+}
 export function createGraphStore(building: Building, mode: 'local' | 'cloud'): GraphStore {
   return mode === 'local' ? createLocalGraphStore(building) : createCloudGraphStore(building);
 }
