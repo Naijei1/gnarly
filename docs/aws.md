@@ -11,7 +11,9 @@ Account `402275401617`, region `us-east-1`, tagged `project=gnarly`.
 | DynamoDB table | `gnarly` (index `GSI1`) |
 | S3 bucket | `gnarly-data-402275401617-us-east-1` |
 | Cognito user pool | `us-east-1_pQIUmVbPJ` |
-| Cognito app client | `1osnrt38iuqvf5laum1tnj1hdn` (public, SRP + refresh, email sign-in, self-signup off) |
+| Cognito app client | `1osnrt38iuqvf5laum1tnj1hdn` (public, SRP + refresh, authorization code + PKCE) |
+| Cognito hosted domain | `gnarly-naijei.auth.us-east-1.amazoncognito.com` |
+| Publish API | `https://m7sgp6qsjkimymyrwa6bilxqzq0acbhx.lambda-url.us-east-1.on.aws` |
 
 Object keys are unchanged from Firebase Storage: `buildings/<id>/<version>/...`. Some keys contain spaces. The bucket CORS allows `https://naijei.com` and `http://localhost:5173`. This change does not edit that CORS configuration. Browser uploads use presigned PUTs, so the rule also needs `PUT` and the `Content-Type` request header. Confirm that before relying on in-browser saves; downloads only need `GET`.
 
@@ -34,7 +36,7 @@ Writes (create, publish, commit, presigned PUT, graph/layout/connection pointer 
 
 The web app hides the Edit tab, the cloud save mode, and record-editing controls unless that same verified email is signed in. Hiding the controls is not the security check; the API is.
 
-On AWS the token must be a Cognito **ID** token (the access token has no email claim). The web client uses SRP and sends the ID token.
+On AWS the token must be a Cognito **ID** token (the access token has no email claim). The web client sends that ID token after Google sign-in or the email/password fallback.
 
 ## Environment
 
@@ -56,14 +58,16 @@ GNARLY_CORS_ORIGINS=https://naijei.com,http://localhost:5173,http://localhost:41
 Web (`web/.env.example`):
 
 ```sh
-VITE_GNARLY_API_BASE=https://<function-url>
+VITE_GNARLY_API_BASE=https://m7sgp6qsjkimymyrwa6bilxqzq0acbhx.lambda-url.us-east-1.on.aws
 VITE_COGNITO_USER_POOL_ID=us-east-1_pQIUmVbPJ
 VITE_COGNITO_CLIENT_ID=1osnrt38iuqvf5laum1tnj1hdn
+VITE_COGNITO_DOMAIN=gnarly-naijei.auth.us-east-1.amazoncognito.com
+VITE_COGNITO_REDIRECT_URI=https://naijei.com/gnarly/
 VITE_ADMIN_EMAILS=nj277@cornell.edu
 VITE_BASE=/gnarly/
 ```
 
-`VITE_BASE=/gnarly/` is for a build served at `https://naijei.com/gnarly/`. Local `npm run dev` should leave `VITE_BASE=/`.
+`VITE_BASE=/gnarly/` is for a build served at `https://naijei.com/gnarly/`. Local `npm run dev` should leave `VITE_BASE=/` and set `VITE_COGNITO_REDIRECT_URI=http://localhost:5173/`. Those two callback and logout URLs are the ones registered on the app client. The redirect URI used to start sign-in must be the same value sent to the token endpoint, and it has to be the page the browser is actually on.
 
 ## Deploy the API (not done here)
 
@@ -96,11 +100,15 @@ set -a && source .env && set +a
 npm start
 ```
 
-## Cognito sign-in was not finished
+## Google sign-in
 
-Self-signup is off, and this change does not call `SignUp` or `AdminCreateUser`. Email/password SRP works only if `nj277@cornell.edu` already exists in the pool with a permanent password.
+**Sign in with Google** is the primary button. It opens the hosted domain:
 
-If that person can only sign in with Google today, the pool needs a Google IdP (or a hosted UI) before the web form can use it. That federation was **not** configured. A temporary Cognito password also cannot be completed in the form; set a permanent password in the pool, then sign in.
+`https://gnarly-naijei.auth.us-east-1.amazoncognito.com/oauth2/authorize?identity_provider=Google&response_type=code`
+
+The request uses PKCE (`S256`) and `scope=openid email`. The browser exchanges the returned code at `/oauth2/token`, stores the ID, access, and refresh tokens, and refreshes them before they expire. API calls send the ID token. Sign-out clears those tokens and redirects to the hosted `/logout` URL. Email and password remain as a fallback and still do not create users.
+
+This repo does not change the user pool. Google sign-in works after the Google IdP is attached to the pool and the ID token includes `email` plus `email_verified: true` for `nj277@cornell.edu`. Anyone else can sign in and still cannot write.
 
 ## Other clients
 

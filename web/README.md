@@ -23,8 +23,8 @@ Browser API keys are visible in the site bundle; HTTP referrer and API restricti
 
 ## Connect the cloud API
 
-1. Copy `web/.env.example` to `web/.env`. Set `VITE_GNARLY_API_BASE` to the publish API origin (local `http://127.0.0.1:8080`, or the Lambda Function URL after you deploy it yourself). The pool id and client id default to the provisioned Cognito app client. Do not put a secret in this file. The hosted site is `https://naijei.com/gnarly/`; set `VITE_BASE=/gnarly/` when building for that path.
-2. Anyone can view buildings. **Sign in** is only for editing, and only `nj277@cornell.edu` (or `VITE_ADMIN_EMAILS`) with a verified email sees the edit UI. The API enforces the same rule. This app does not create Cognito users. Sign-in is email and password (SRP) against a user that already exists in the pool.
+1. Copy `web/.env.example` to `web/.env`. `VITE_GNARLY_API_BASE` defaults to the deployed Function URL. Set `VITE_COGNITO_REDIRECT_URI` to `http://localhost:5173/` for local dev, or `https://naijei.com/gnarly/` for the hosted site. Set `VITE_BASE=/gnarly/` only for that hosted build. Do not put a secret in this file.
+2. Anyone can view buildings. **Sign in with Google** is only for editing, and only `nj277@cornell.edu` (or `VITE_ADMIN_EMAILS`) with a verified email sees the edit UI. The API enforces the same rule from the Cognito ID token. Email and password remain a fallback. This app does not create Cognito users.
 3. A building item needs `name`, `status`, and `activeVersion`. Latitude and longitude place it on the map. Records without them appear in search but cannot have a map marker.
 4. Objects stay at `buildings/{id}/{version}/...` (the same keys as Firebase Storage, including keys that contain spaces). Version, zone, and floor rows live in the DynamoDB table `gnarly`. The browser downloads presigned S3 URLs directly. Bucket CORS already allows `https://naijei.com` and `http://localhost:5173`.
 

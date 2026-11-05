@@ -4,7 +4,7 @@ import { ArrowRight, Building2, ChevronRight, Database, LocateFixed, Navigation,
 import ExteriorMap from './ExteriorMap';
 import AuthDialog from './AuthDialog';
 import { demoBuilding, type Building } from './data';
-import { configured, currentEmail, watchUser, listBuildings, loadBuilding, loadPreviousBuildingVersion } from './cloud';
+import { completeOAuthRedirect, configured, currentEmail, watchUser, listBuildings, loadBuilding, loadPreviousBuildingVersion } from './cloud';
 import 'leaflet/dist/leaflet.css';
 import './style.css';
 const BuildingWorkspace = lazy(() => import('./BuildingWorkspace'));
@@ -35,6 +35,7 @@ function App() {
   const [refresh, setRefresh] = useState(0);
   const selectionRequest = useRef(0);
   useEffect(() => watchUser(account => { setUser(Boolean(account)); setEmail(account?.email || ''); }), []);
+  useEffect(() => { void completeOAuthRedirect().then(result => { if (result.error) setAuthOpen(true); }); }, []);
   useEffect(() => {
     let active = true;
     setLoadError('');

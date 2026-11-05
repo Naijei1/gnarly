@@ -5,22 +5,43 @@ import {
   CognitoUserPool,
   type CognitoUserSession,
 } from 'amazon-cognito-identity-js';
+import {
+  authorizationCodeBody,
+  authorizeUrl,
+  codeChallenge,
+  codeVerifier,
+  DEFAULT_COGNITO_DOMAIN,
+  HOSTED_REDIRECTS,
+  idTokenClaims,
+  logoutUrl,
+  normalizeRedirect,
+  refreshTokenBody,
+  tokenEndpoint,
+} from './cognitoOAuth.ts';
 import type { Building, BuildingLayout, Graph, Node, ScanFeatures, SurfaceColorFace, SurfaceColors, ZoneConnections, ZoneView } from './data';
 import { graphDigest } from './graphStore.ts';
 import { emptyZoneConnections, normalizeZoneConnections } from './zoneConnections.ts';
 
 const poolId = import.meta.env.VITE_COGNITO_USER_POOL_ID || 'us-east-1_pQIUmVbPJ';
 const clientId = import.meta.env.VITE_COGNITO_CLIENT_ID || '1osnrt38iuqvf5laum1tnj1hdn';
+const cognitoDomain = import.meta.env.VITE_COGNITO_DOMAIN || DEFAULT_COGNITO_DOMAIN;
 const pool = poolId && clientId ? new CognitoUserPool({ UserPoolId: poolId, ClientId: clientId }) : null;
 const adminEmails = (import.meta.env.VITE_ADMIN_EMAILS || 'nj277@cornell.edu').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+const TOKEN_KEY = 'gnarly.oauth.tokens';
+const VERIFIER_KEY = 'gnarly.oauth.verifier';
+const STATE_KEY = 'gnarly.oauth.state';
 
 export const configured = Boolean(import.meta.env.VITE_GNARLY_API_BASE);
-export const signInConfigured = Boolean(pool);
+export const signInConfigured = Boolean(pool && cognitoDomain);
 
 export type SessionUser = { uid: string; email: string; emailVerified: boolean };
 export type DataRecord = { path: string; data: Record<string, unknown> };
 
+type OAuthTokens = { id_token: string; access_token: string; refresh_token: string; expires_at: number };
+
 let current: SessionUser | null = null;
+let authError = '';
+let refreshInflight: Promise<string> | null = null;
 const listeners = new Set<(user: SessionUser | null) => void>();
 
 function emit() {
@@ -34,16 +55,181 @@ function userFromSession(next: CognitoUserSession): SessionUser {
   return { uid: String(payload.sub || ''), email, emailVerified: verified };
 }
 
+function redirectUri() {
+  const configuredUri = import.meta.env.VITE_COGNITO_REDIRECT_URI?.trim();
+  if (configuredUri) return normalizeRedirect(configuredUri);
+  if (typeof window === 'undefined') return HOSTED_REDIRECTS[1];
+  const here = window.location.origin + window.location.pathname;
+  return HOSTED_REDIRECTS.find(url => here === url || here.startsWith(url)) || HOSTED_REDIRECTS[1];
+}
+
+function readTokens(): OAuthTokens | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(TOKEN_KEY) || 'null') as OAuthTokens | null;
+    if (!parsed?.id_token) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeTokens(tokens: OAuthTokens) {
+  localStorage.setItem(TOKEN_KEY, JSON.stringify(tokens));
+}
+
+function clearTokens() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+function applyIdToken(idToken: string) {
+  const claims = idTokenClaims(idToken);
+  current = { uid: claims.sub, email: claims.email, emailVerified: claims.emailVerified };
+}
+
 function restore() {
+  const stored = readTokens();
+  if (stored) {
+    try {
+      applyIdToken(stored.id_token);
+      emit();
+      return;
+    } catch {
+      clearTokens();
+    }
+  }
   const user = pool?.getCurrentUser();
   if (!user) return;
   user.getSession((error: Error | null, next: CognitoUserSession | null) => {
-    if (error || !next) return;
+    if (error || !next || readTokens()) return;
     current = userFromSession(next);
     emit();
   });
 }
 restore();
+
+export function takeAuthError() {
+  const message = authError;
+  authError = '';
+  return message;
+}
+
+export async function signInWithGoogle() {
+  if (!clientId || !cognitoDomain) throw Error('Cognito is not configured.');
+  const verifier = codeVerifier();
+  const state = codeVerifier();
+  sessionStorage.setItem(VERIFIER_KEY, verifier);
+  sessionStorage.setItem(STATE_KEY, state);
+  window.location.assign(authorizeUrl({
+    domain: cognitoDomain,
+    clientId,
+    redirectUri: redirectUri(),
+    challenge: await codeChallenge(verifier),
+    state,
+  }));
+}
+
+let completing: Promise<{ error?: string }> | null = null;
+
+export function completeOAuthRedirect() {
+  if (!completing) completing = runOAuthRedirect();
+  return completing;
+}
+
+async function runOAuthRedirect(): Promise<{ error?: string }> {
+  if (typeof window === 'undefined') return {};
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const returnedState = params.get('state');
+  const oauthError = params.get('error_description') || params.get('error');
+  if (!code && !oauthError) return {};
+  stripAuthQuery();
+  if (oauthError) {
+    authError = oauthError;
+    return { error: authError };
+  }
+  const expected = sessionStorage.getItem(STATE_KEY);
+  const verifier = sessionStorage.getItem(VERIFIER_KEY);
+  sessionStorage.removeItem(STATE_KEY);
+  sessionStorage.removeItem(VERIFIER_KEY);
+  if (!code || !verifier || !expected || expected !== returnedState) {
+    authError = 'Google sign-in could not be completed. Try again.';
+    return { error: authError };
+  }
+  try {
+    const tokens = await requestTokens(authorizationCodeBody({ clientId, code, redirectUri: redirectUri(), verifier }));
+    pool?.getCurrentUser()?.signOut();
+    writeTokens(tokens);
+    applyIdToken(tokens.id_token);
+    emit();
+    return {};
+  } catch (error) {
+    authError = error instanceof Error ? error.message : 'Google sign-in failed.';
+    return { error: authError };
+  }
+}
+
+function stripAuthQuery() {
+  const url = new URL(window.location.href);
+  for (const key of ['code', 'state', 'error', 'error_description']) url.searchParams.delete(key);
+  const query = url.searchParams.toString();
+  const search = query ? `?${query}` : '';
+  window.history.replaceState({}, '', url.pathname + search + url.hash);
+}
+
+async function requestTokens(body: URLSearchParams): Promise<OAuthTokens> {
+  const response = await fetch(tokenEndpoint(cognitoDomain), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const payload = await response.json().catch(() => ({})) as { id_token?: string; access_token?: string; refresh_token?: string; expires_in?: number; error_description?: string; error?: string };
+  if (!response.ok || !payload.id_token || !payload.access_token) {
+    throw Error(payload.error_description || payload.error || 'Cognito did not return tokens.');
+  }
+  const existing = readTokens();
+  return {
+    id_token: payload.id_token,
+    access_token: payload.access_token,
+    refresh_token: payload.refresh_token || existing?.refresh_token || '',
+    expires_at: Date.now() + Number(payload.expires_in || 3600) * 1000,
+  };
+}
+
+async function oauthIdToken() {
+  const stored = readTokens();
+  if (!stored) return '';
+  if (stored.expires_at > Date.now() + 60_000) {
+    applyIdToken(stored.id_token);
+    return stored.id_token;
+  }
+  if (!stored.refresh_token) {
+    clearTokens();
+    return '';
+  }
+  if (!refreshInflight) refreshInflight = refreshOAuth(stored).finally(() => { refreshInflight = null; });
+  return refreshInflight;
+}
+
+async function refreshOAuth(stored: OAuthTokens) {
+  try {
+    const tokens = await requestTokens(refreshTokenBody(clientId, stored.refresh_token));
+    if (!tokens.refresh_token) tokens.refresh_token = stored.refresh_token;
+    writeTokens(tokens);
+    applyIdToken(tokens.id_token);
+    emit();
+    return tokens.id_token;
+  } catch {
+    clearTokens();
+    if (current && !pool?.getCurrentUser()) {
+      current = null;
+      emit();
+    }
+    return '';
+  }
+}
+
+if (typeof window !== 'undefined') void completeOAuthRedirect();
 
 export function watchUser(callback: (user: SessionUser | null) => void) {
   callback(current);
@@ -74,6 +260,7 @@ export function login(email: string, password: string) {
   return new Promise<void>((resolve, reject) => {
     user.authenticateUser(new AuthenticationDetails({ Username: username, Password: password }), {
       onSuccess(next) {
+        clearTokens();
         current = userFromSession(next);
         emit();
         resolve();
@@ -92,9 +279,16 @@ export function login(email: string, password: string) {
 }
 
 export function logout() {
+  const hosted = readTokens() != null;
+  clearTokens();
   pool?.getCurrentUser()?.signOut();
   current = null;
   emit();
+  if (hosted && cognitoDomain && clientId) {
+    window.location.assign(logoutUrl(cognitoDomain, clientId, redirectUri()));
+    return true;
+  }
+  return false;
 }
 
 function apiBase() {
@@ -104,6 +298,8 @@ function apiBase() {
 }
 
 async function idToken() {
+  const oauth = await oauthIdToken();
+  if (oauth) return oauth;
   const user = pool?.getCurrentUser();
   if (!user) return '';
   const next = await new Promise<CognitoUserSession>((resolve, reject) => {
