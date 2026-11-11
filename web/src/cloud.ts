@@ -11,10 +11,10 @@ import {
   codeChallenge,
   codeVerifier,
   DEFAULT_COGNITO_DOMAIN,
-  HOSTED_REDIRECTS,
   idTokenClaims,
   logoutUrl,
   normalizeRedirect,
+  redirectForOrigin,
   refreshTokenBody,
   tokenEndpoint,
 } from './cognitoOAuth.ts';
@@ -58,9 +58,10 @@ function userFromSession(next: CognitoUserSession): SessionUser {
 function redirectUri() {
   const configuredUri = import.meta.env.VITE_COGNITO_REDIRECT_URI?.trim();
   if (configuredUri) return normalizeRedirect(configuredUri);
-  if (typeof window === 'undefined') return HOSTED_REDIRECTS[1];
-  const here = window.location.origin + window.location.pathname;
-  return HOSTED_REDIRECTS.find(url => here === url || here.startsWith(url)) || HOSTED_REDIRECTS[1];
+  // Same bundle on gnarlynav.com and an Amplify preview: origin changes, the Vite base does not.
+  const base = import.meta.env.BASE_URL || '/demo/';
+  const origin = typeof window === 'undefined' ? 'http://localhost:5173' : window.location.origin;
+  return redirectForOrigin(origin, base);
 }
 
 function readTokens(): OAuthTokens | null {

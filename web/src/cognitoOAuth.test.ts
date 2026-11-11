@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { authorizationCodeBody, authorizeUrl, codeChallenge, idTokenClaims, logoutUrl, refreshTokenBody } from './cognitoOAuth.ts';
+import { authorizationCodeBody, authorizeUrl, codeChallenge, idTokenClaims, logoutUrl, redirectForOrigin, refreshTokenBody } from './cognitoOAuth.ts';
 
 test('Google authorize URL is the hosted PKCE code flow', () => {
   const url = new URL(authorizeUrl({
@@ -36,6 +36,12 @@ test('token requests exchange the code and refresh without a client secret', () 
   const logout = new URL(logoutUrl('gnarly-naijei.auth.us-east-1.amazoncognito.com', 'client', 'http://localhost:5173/'));
   assert.equal(logout.pathname, '/logout');
   assert.equal(logout.searchParams.get('logout_uri'), 'http://localhost:5173/');
+});
+
+test('callback follows the open origin and the /demo/ base', () => {
+  assert.equal(redirectForOrigin('https://gnarlynav.com', '/demo/'), 'https://gnarlynav.com/demo/');
+  assert.equal(redirectForOrigin('https://preview.d3fmnitnjitx6a.amplifyapp.com/', '/demo'), 'https://preview.d3fmnitnjitx6a.amplifyapp.com/demo/');
+  assert.equal(redirectForOrigin('http://localhost:5173', '/'), 'http://localhost:5173/');
 });
 
 test('PKCE challenge is S256 and the ID token email claims are readable', async () => {

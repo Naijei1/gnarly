@@ -62,12 +62,13 @@ VITE_GNARLY_API_BASE=https://m7sgp6qsjkimymyrwa6bilxqzq0acbhx.lambda-url.us-east
 VITE_COGNITO_USER_POOL_ID=us-east-1_pQIUmVbPJ
 VITE_COGNITO_CLIENT_ID=1osnrt38iuqvf5laum1tnj1hdn
 VITE_COGNITO_DOMAIN=gnarly-naijei.auth.us-east-1.amazoncognito.com
-VITE_COGNITO_REDIRECT_URI=https://naijei.com/gnarly/
+# Leave unset. The client uses window.location.origin + VITE_BASE.
+# VITE_COGNITO_REDIRECT_URI=
 VITE_ADMIN_EMAILS=nj277@cornell.edu
-VITE_BASE=/gnarly/
+VITE_BASE=/demo/
 ```
 
-`VITE_BASE=/gnarly/` is for a build served at `https://naijei.com/gnarly/`. Local `npm run dev` should leave `VITE_BASE=/` and set `VITE_COGNITO_REDIRECT_URI=http://localhost:5173/`. Those two callback and logout URLs are the ones registered on the app client. The redirect URI used to start sign-in must be the same value sent to the token endpoint, and it has to be the page the browser is actually on.
+`VITE_BASE=/demo/` is for the build served at `https://gnarlynav.com/demo/`. With `VITE_COGNITO_REDIRECT_URI` unset, the callback and logout URL are `window.location.origin + '/demo/'`, so one bundle works on gnarlynav.com and on an Amplify preview origin. Local `npm run dev` should leave `VITE_BASE=/` (callback `http://localhost:5173/`). Set `VITE_COGNITO_REDIRECT_URI` only to pin a callback. The redirect URI used to start sign-in must be the same value sent to the token endpoint, and it has to be the page the browser is actually on. Register each of these as both a callback URL and a sign-out URL: `https://gnarlynav.com/demo/`, `https://preview.d3fmnitnjitx6a.amplifyapp.com/demo/`, and `http://localhost:5173/`.
 
 ## Deploy the API (not done here)
 
@@ -90,7 +91,7 @@ The stack `GnarlyApi` is tagged `project=gnarly`. Its Lambda role can:
 
 It cannot delete objects or items. The Function URL is public (`authType: NONE`); the function checks the JWT itself. CORS is handled by the function for `https://naijei.com` and localhost. Copy the `ApiUrl` output into `VITE_GNARLY_API_BASE`.
 
-Do not point naijei.com DNS at the Function URL from this stack. Hosting the web build at `/gnarly/` is a separate step and was not changed.
+Do not point naijei.com DNS at the Function URL from this stack. Hosting the web build at `https://gnarlynav.com/demo/` is a separate step and was not changed.
 
 Local API, without Lambda:
 

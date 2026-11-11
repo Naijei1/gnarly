@@ -1,7 +1,15 @@
 /** Hosted-UI helpers for Cognito's Google IdP. The pool and domain are not modified here. */
 
 export const DEFAULT_COGNITO_DOMAIN = 'gnarly-naijei.auth.us-east-1.amazoncognito.com';
-export const HOSTED_REDIRECTS = ['https://naijei.com/gnarly/', 'http://localhost:5173/'] as const;
+
+/** Callback and sign-out URL for the page that is actually open. Hosted builds use base `/demo/`. */
+export function redirectForOrigin(origin: string, base = '/demo/') {
+  const root = origin.trim().replace(/\/+$/, '');
+  let path = base.trim() || '/';
+  if (!path.startsWith('/')) path = `/${path}`;
+  if (!path.endsWith('/')) path = `${path}/`;
+  return `${root}${path}`;
+}
 
 export function hostedHost(domain: string) {
   return domain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
