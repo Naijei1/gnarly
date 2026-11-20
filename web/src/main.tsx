@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { ArrowRight, Building2, ChevronRight, Database, LocateFixed, Navigation, Search, ShieldCheck, X } from 'lucide-react';
 import ExteriorMap from './ExteriorMap';
 import AuthDialog from './AuthDialog';
+import { trackView } from './analytics';
 import { demoBuilding, type Building } from './data';
 import { completeOAuthRedirect, configured, currentEmail, watchUser, listBuildings, loadBuilding, loadPreviousBuildingVersion } from './cloud';
 import 'leaflet/dist/leaflet.css';
@@ -34,6 +35,8 @@ function App() {
   const [search, setSearch] = useState('');
   const [refresh, setRefresh] = useState(0);
   const selectionRequest = useRef(0);
+  const view = dataOpen ? "data" : inside && selected?.graph ? "indoors" : selected ? "details" : "map";
+  useEffect(() => { trackView(view); }, [view]);
   useEffect(() => watchUser(account => { setUser(Boolean(account)); setEmail(account?.email || ''); }), []);
   useEffect(() => { void completeOAuthRedirect().then(result => { if (result.error) setAuthOpen(true); }); }, []);
   useEffect(() => {
